@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <gtk/gtk.h>
 #include <locale.h>
+#include <math.h>
 
 enum ENTRIES {
     ENTRY_DIRECTORY,
@@ -24,6 +25,7 @@ struct {
 } widgets;
 
 GPid timelapse_pid;
+gboolean is_running;
 
 typedef struct {
     gchar *filename;
@@ -37,6 +39,22 @@ void main_cleanup(void)
 {
 }
 
+static gboolean main_running_area_draw(GtkWidget *widget, cairo_t *cr, gpointer userdata)
+{
+    GtkAllocation alloc;
+    if (is_running) {
+        gtk_widget_get_allocation(widget, &alloc);
+
+        cairo_translate(cr, alloc.width/2, alloc.height/2);
+        double r = alloc.width > alloc.height ? alloc.height/2 : alloc.width/2;
+        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0);
+        cairo_arc(cr, 0, 0, r, 0, 2 * M_PI);
+        cairo_fill(cr);
+    }
+
+    return TRUE;
+}
+
 static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
 {
     g_print("Child exited\n");
@@ -45,6 +63,9 @@ static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
 
     gtk_widget_set_sensitive(widgets.start_button, TRUE);
     gtk_widget_set_sensitive(widgets.stop_button, FALSE);
+
+    is_running = FALSE;
+    gtk_widget_queue_draw(widgets.running_area);
 }
 
 gboolean main_child_start(const TimelapseConfig *config)
@@ -79,6 +100,8 @@ void main_child_stop(void)
 {
     if (timelapse_pid > 0)
         kill(timelapse_pid, SIGKILL);
+    is_running = FALSE;
+    gtk_widget_queue_draw(widgets.running_area);
 }
 
 static void main_start_button_clicked(GtkButton *button, gpointer userdata)
@@ -153,6 +176,9 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
     gtk_widget_set_sensitive(widgets.start_button, FALSE);
     gtk_widget_set_sensitive(widgets.stop_button, TRUE);
 
+    is_running = TRUE;
+    gtk_widget_queue_draw(widgets.running_area);
+
 done:
     g_free(msg);
     g_free(config.filename);
@@ -226,6 +252,12 @@ void main_create_window(void)
     gtk_box_pack_start(GTK_BOX(hbox), widgets.stop_button, FALSE, FALSE, 3);
 
     gtk_grid_attach(GTK_GRID(grid), hbox, 0, 6, 3, 1);
+
+    widgets.running_area = gtk_drawing_area_new();
+    gtk_widget_set_size_request(widgets.running_area, 100, 100);
+    g_signal_connect(G_OBJECT(widgets.running_area), "draw",
+            G_CALLBACK(main_running_area_draw), NULL);
+    gtk_grid_attach(GTK_GRID(grid), widgets.running_area, 2, 1, 1, 5);
 
     gtk_container_add(GTK_CONTAINER(widgets.main_window), grid);
 
