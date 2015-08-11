@@ -24,6 +24,7 @@ struct {
 } widgets;
 
 GPid timelapse_pid;
+GFileMonitor *file_monitor;
 
 typedef struct {
     gchar *filename;
@@ -35,6 +36,12 @@ typedef struct {
 
 void main_cleanup(void)
 {
+}
+
+static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
+        GFile *other_file, GFileMonitorEvent event_type, gpointer userdata)
+{
+    g_print("directory changed: %d\n", event_type);
 }
 
 static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
@@ -79,6 +86,11 @@ void main_child_stop(void)
 {
     if (timelapse_pid > 0)
         kill(timelapse_pid, SIGKILL);
+    if (file_monitor) {
+        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
+        g_object_unref(G_OBJECT(file_monitor));
+        file_monitor = NULL;
+    }
 }
 
 static void main_start_button_clicked(GtkButton *button, gpointer userdata)
@@ -148,7 +160,20 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         goto done;
-     }
+    }
+
+    GFile *dir = NULL;
+    if (!directory) {
+        directory = g_get_current_dir();
+    }
+    dir = g_file_new_for_path(directory);
+
+    file_monitor = g_file_monitor_directory(dir,
+            G_FILE_MONITOR_NONE,
+            NULL, NULL);
+    g_signal_connect(G_OBJECT(file_monitor), "changed",
+            G_CALLBACK(main_directory_changed_cb), NULL);
+    g_object_unref(G_OBJECT(dir));
 
     gtk_widget_set_sensitive(widgets.start_button, FALSE);
     gtk_widget_set_sensitive(widgets.stop_button, TRUE);
