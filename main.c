@@ -39,8 +39,12 @@ void main_cleanup(void)
 
 static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
 {
+    g_print("Child exited\n");
     g_spawn_close_pid(timelapse_pid);
     timelapse_pid = 0;
+
+    gtk_widget_set_sensitive(widgets.start_button, TRUE);
+    gtk_widget_set_sensitive(widgets.stop_button, FALSE);
 }
 
 gboolean main_child_start(const TimelapseConfig *config)
@@ -56,9 +60,6 @@ gboolean main_child_start(const TimelapseConfig *config)
         "-t", count,
         "-r", rate,
         NULL };
-    gint i;
-    for (i = 0; argv[i]; ++i)
-        g_print("argv[%02d]: %s\n", i, argv[i]);
     ret = g_spawn_async(NULL, argv, NULL,
             G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH, NULL, NULL,
             &timelapse_pid, NULL);
@@ -82,7 +83,7 @@ void main_child_stop(void)
 
 static void main_start_button_clicked(GtkButton *button, gpointer userdata)
 {
-    gchar *directory;
+    gchar *directory, *tmp;
     const gchar *filename, *width, *height, *count, *interval;
 
     directory = gtk_file_chooser_get_uri(GTK_FILE_CHOOSER(widgets.entries[ENTRY_DIRECTORY]));
@@ -94,10 +95,12 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
 
     TimelapseConfig config;
     if (directory) {
-        config.filename = g_build_filename(
+        tmp = g_build_filename(
                 directory,
                 filename,
                 NULL);
+        config.filename = g_filename_from_uri(tmp, NULL, NULL);
+        g_free(tmp);
     }
     else {
         config.filename = g_strdup(filename);
@@ -122,8 +125,9 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         g_string_append(error_msg, "Interval must be a number.\n");
 
     gchar *msg = g_string_free(error_msg, FALSE);
+    GtkWidget *dialog;
     if (msg[0]) {
-        GtkWidget *dialog = gtk_message_dialog_new(
+        dialog = gtk_message_dialog_new(
                 GTK_WINDOW(widgets.main_window),
                 GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
                 GTK_MESSAGE_ERROR,
@@ -134,10 +138,20 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         goto done;
     }
 
+    if (!main_child_start(&config)) {
+        dialog = gtk_message_dialog_new(
+                GTK_WINDOW(widgets.main_window),
+                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_ERROR,
+                GTK_BUTTONS_OK,
+                "Could not spawn process. Maybe the program `streamer' is missing.");
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        goto done;
+     }
+
     gtk_widget_set_sensitive(widgets.start_button, FALSE);
     gtk_widget_set_sensitive(widgets.stop_button, TRUE);
-
-    main_child_start(&config);
 
 done:
     g_free(msg);
