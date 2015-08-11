@@ -42,7 +42,7 @@ dist: $(tl_SRC) $(tl_HEADERS) Makefile
 	[ ! -d ${APPNAME}-${VERSION} ] || rm -rf ${APPNAME}-${VERSION}
 	[ ! -e ${APPNAME}-${VERSION}.tar.gz ] || rm ${APPNAME}-${VERSION}.tar.gz
 	mkdir ${APPNAME}-${VERSION}
-	cp $(tl_SRC) $(tl_HEADERS) Makefile ${APPNAME}.desktop ${APPNAME}-${VERSION}
+	cp $(tl_SRC) $(tl_HEADERS) Makefile ${APPNAME}.desktop LICENSE ${APPNAME}-${VERSION}
 	echo -n ${TLVERSION} > ${APPNAME}-${VERSION}/TL_VERSION
 	echo -n ${VERSION} > ${APPNAME}-${VERSION}/VERSION
 	tar cfz ${APPNAME}-${VERSION}.tar.gz ${APPNAME}-${VERSION}
