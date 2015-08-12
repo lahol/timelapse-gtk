@@ -3,6 +3,7 @@
 #include <gtk/gtk.h>
 #include <locale.h>
 #include <math.h>
+#include <string.h>
 
 enum ENTRIES {
     ENTRY_DIRECTORY,
@@ -34,18 +35,68 @@ typedef struct {
     guint height;
     guint count;
     guint interval;
+    gboolean valid;
 } TimelapseConfig;
+
+TimelapseConfig current_config;
+
+void main_child_stop(void);
 
 void main_cleanup(void)
 {
+    main_child_stop();
 }
 
-void main_child_stop(void);
+gboolean main_filename_matches_pattern(gchar *name1, gchar *name2)
+{
+    if (!name1 || !name2)
+        return FALSE;
+    gssize j = strlen(name1);
+    if (strlen(name2) != j) {
+        return FALSE;
+    }
+    for ( ; j >= 0; --j) {
+        if (!g_ascii_isdigit(name1[j])) {
+            if (name1[j] != name2[j]) {
+                return FALSE;
+            }
+        }
+        else {
+            break;
+        }
+    }
+    for ( ; j >= 0; --j) {
+        if (g_ascii_isdigit(name1[j]) && g_ascii_isdigit(name2[j])) {
+            continue;
+        }
+        break;
+    }
+    for ( ; j >= 0; --j) {
+        if (name1[j] != name2[j]) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
 
 static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
         GFile *other_file, GFileMonitorEvent event_type, gpointer userdata)
 {
-    g_print("directory changed: %d\n", event_type);
+    if (event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) {
+        gchar *bn1 = g_path_get_basename(current_config.filename);
+        gchar *bn2 = g_file_get_basename(file);
+        gboolean match = main_filename_matches_pattern(bn1, bn2);
+        g_free(bn1);
+        g_free(bn2);
+        
+        if (match) {
+            gchar *path = g_file_get_path(file);
+            GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(path, 320, 240, NULL);
+            gtk_image_set_from_pixbuf(GTK_IMAGE(widgets.last_view), pixbuf);
+            g_object_unref(G_OBJECT(pixbuf));
+            g_free(path);
+        }
+    }
 }
 
 static gboolean main_running_area_draw(GtkWidget *widget, cairo_t *cr, gpointer userdata)
@@ -64,9 +115,20 @@ static gboolean main_running_area_draw(GtkWidget *widget, cairo_t *cr, gpointer 
     return TRUE;
 }
 
+static gboolean main_live_view_draw(GtkWidget *widget, cairo_t *cr, gpointer userdata)
+{
+    GtkAllocation alloc;
+    gtk_widget_get_allocation(widget, &alloc);
+
+    cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+    cairo_rectangle(cr, 0.0, 0.0, alloc.width, alloc.height);
+    cairo_fill(cr);
+
+    return TRUE;
+}
+
 static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
 {
-    g_print("Child exited\n");
     g_spawn_close_pid(timelapse_pid);
     timelapse_pid = 0;
 
@@ -115,8 +177,10 @@ void main_child_stop(void)
         file_monitor = NULL;
     }
 
+    current_config.valid = FALSE;
     is_running = FALSE;
-    gtk_widget_queue_draw(widgets.running_area);
+    if (GTK_IS_WIDGET(widgets.running_area))
+        gtk_widget_queue_draw(widgets.running_area);
 }
 
 static void main_start_button_clicked(GtkButton *button, gpointer userdata)
@@ -131,34 +195,37 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
     count = gtk_entry_get_text(GTK_ENTRY(widgets.entries[ENTRY_N_SNAPSHOTS]));
     interval = gtk_entry_get_text(GTK_ENTRY(widgets.entries[ENTRY_INTERVAL]));
 
-    TimelapseConfig config;
+    current_config.valid = FALSE;
+    g_free(current_config.filename);
+    current_config.filename = NULL;
+
     if (directory) {
         tmp = g_build_filename(
                 directory,
                 filename,
                 NULL);
-        config.filename = g_filename_from_uri(tmp, NULL, NULL);
+        current_config.filename = g_filename_from_uri(tmp, NULL, NULL);
         g_free(tmp);
     }
     else {
-        config.filename = g_strdup(filename);
+        current_config.filename = g_strdup(filename);
     }
     gchar *endptr;
     GString *error_msg = g_string_new(NULL);
 
-    config.width = (guint)strtoul(width, &endptr, 10);
+    current_config.width = (guint)strtoul(width, &endptr, 10);
     if (*endptr || endptr == width)
         g_string_append(error_msg, "Width must be a number.\n");
 
-    config.height = (guint)strtoul(height, &endptr, 10);
+    current_config.height = (guint)strtoul(height, &endptr, 10);
     if (*endptr || endptr == height)
         g_string_append(error_msg, "Height must be a number.\n");
 
-    config.count = (guint)strtoul(count, &endptr, 10);
+    current_config.count = (guint)strtoul(count, &endptr, 10);
     if (*endptr || endptr == count)
         g_string_append(error_msg, "Count must be a number.\n");
 
-    config.interval = (guint)strtoul(interval, &endptr, 10);
+    current_config.interval = (guint)strtoul(interval, &endptr, 10);
     if (*endptr || endptr == interval)
         g_string_append(error_msg, "Interval must be a number.\n");
 
@@ -176,7 +243,7 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         goto done;
     }
 
-    if (!main_child_start(&config)) {
+    if (!main_child_start(&current_config)) {
         dialog = gtk_message_dialog_new(
                 GTK_WINDOW(widgets.main_window),
                 GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
@@ -215,7 +282,6 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
 
 done:
     g_free(msg);
-    g_free(config.filename);
     g_free(directory);
 }
 
@@ -236,10 +302,29 @@ void main_create_window(void)
     GtkWidget *grid = gtk_grid_new();
     GtkWidget *label;
     GtkWidget *hbox;
+    GdkPixbuf *pixbuf;
 
     gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 3);
     gtk_container_set_border_width(GTK_CONTAINER(grid), 3);
+
+    hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+
+    widgets.live_view = gtk_drawing_area_new();
+    gtk_widget_set_size_request(widgets.live_view, 320, 240);
+    g_signal_connect(G_OBJECT(widgets.live_view), "draw",
+            G_CALLBACK(main_live_view_draw), NULL);
+    gtk_box_pack_start(GTK_BOX(hbox), widgets.live_view, TRUE, TRUE, 3);
+
+    pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 320, 240);
+    gdk_pixbuf_fill(pixbuf, 0x000000ff);
+
+    widgets.last_view = gtk_image_new_from_pixbuf(pixbuf);
+    g_object_unref(G_OBJECT(pixbuf));
+
+    gtk_box_pack_start(GTK_BOX(hbox), widgets.last_view, TRUE, TRUE, 3);
+
+    gtk_grid_attach(GTK_GRID(grid), hbox, 0, 0, 3, 1);
 
     label = gtk_label_new("Directory:");
     gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
@@ -258,9 +343,9 @@ void main_create_window(void)
     widgets.entries[ENTRY_WIDTH] = gtk_entry_new();
     label = gtk_label_new(" x ");
     widgets.entries[ENTRY_HEIGHT] = gtk_entry_new();
-    gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_WIDTH], FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_WIDTH], TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 3);
-    gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_HEIGHT], FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_HEIGHT], TRUE, TRUE, 0);
     gtk_grid_attach(GTK_GRID(grid), hbox, 1, 3, 1, 1);
 
     label = gtk_label_new("Image count:");
