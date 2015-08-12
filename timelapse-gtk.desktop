@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Timelapse GTK
+Comment=Capture video frames in timelapse
+Exec=timelapse-gtk
+#Icon=/usr/share/pixmaps/...
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=Video;Recorder;DataVisualization;
+
