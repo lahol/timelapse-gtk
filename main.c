@@ -124,8 +124,17 @@ static gboolean update_running_time(gpointer userdata)
 {
     static time_t cur_time;
     time(&cur_time);
-    gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_RUNNING_TIME]),
-            seconds_to_string((guint32)difftime(cur_time, start_time)));
+
+    gchar *rt = g_strdup(seconds_to_string((guint32)difftime(cur_time, start_time)));
+    gchar *nt = g_strdup(seconds_to_string(next_time >= cur_time ? (guint32)difftime(next_time, cur_time) : 0 ));
+    gchar *text = g_strdup_printf("%s (until next image: %s)", rt, nt);
+
+    gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_RUNNING_TIME]), text);
+
+    g_free(rt);
+    g_free(nt);
+    g_free(text);
+
     return G_SOURCE_CONTINUE;
 }
 
@@ -180,17 +189,16 @@ static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
             struct tm *tm;
             gchar tbuf[256];
             gchar *text;
-            time_t tlast;
             if (stat(path, &st) == 0) {
-                tlast = st.st_mtim.tv_sec;
-                tm = localtime(&tlast);
+                last_time = st.st_mtim.tv_sec;
+                tm = localtime(&last_time);
                 strftime(tbuf, 255, "%x %T", tm);
                 text = g_strdup_printf("%s (%s)", tbuf, path);
                 gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_LAST]), text);
                 g_free(text);
 
-                tlast += current_config.interval;
-                tm = localtime(&tlast);
+                next_time = last_time + current_config.interval;
+                tm = localtime(&next_time);
                 strftime(tbuf, 255, "%x %T", tm);
                 gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_NEXT]), tbuf);
             }
