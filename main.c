@@ -40,6 +40,8 @@ void main_cleanup(void)
 {
 }
 
+void main_child_stop(void);
+
 static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
         GFile *other_file, GFileMonitorEvent event_type, gpointer userdata)
 {
@@ -71,8 +73,7 @@ static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
     gtk_widget_set_sensitive(widgets.start_button, TRUE);
     gtk_widget_set_sensitive(widgets.stop_button, FALSE);
 
-    is_running = FALSE;
-    gtk_widget_queue_draw(widgets.running_area);
+    main_child_stop();
 }
 
 gboolean main_child_start(const TimelapseConfig *config)
@@ -108,6 +109,7 @@ void main_child_stop(void)
     if (timelapse_pid > 0)
         kill(timelapse_pid, SIGKILL);
     if (file_monitor) {
+        /*TODO: do not cancel here */
         g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
         g_object_unref(G_OBJECT(file_monitor));
         file_monitor = NULL;
@@ -190,8 +192,14 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
     if (!directory) {
         directory = g_get_current_dir();
     }
-    dir = g_file_new_for_path(directory);
+    gchar *scheme = g_uri_parse_scheme(directory);
+    if (scheme)
+        dir = g_file_new_for_uri(directory);
+    else
+        dir = g_file_new_for_path(directory);
+    g_free(scheme);
 
+    /*TODO: if another file monitor is running free that first */
     file_monitor = g_file_monitor_directory(dir,
             G_FILE_MONITOR_NONE,
             NULL, NULL);
