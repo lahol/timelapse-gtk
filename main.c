@@ -59,6 +59,53 @@ typedef struct {
 
 TimelapseConfig current_config;
 
+void main_read_config(void)
+{
+    gchar *status_file_path = g_build_filename(
+            g_get_user_config_dir(),
+            "timelapse-status.conf",
+            NULL);
+    GKeyFile *kf = g_key_file_new();
+
+    if (!g_key_file_load_from_file(kf, status_file_path, G_KEY_FILE_NONE, NULL)) {
+        current_config.filename = g_strdup("frame0000.jpeg");
+        current_config.width = 640;
+        current_config.height = 480;
+        current_config.count = 100;
+        current_config.interval = 2;
+    }
+    else {
+        current_config.filename = g_key_file_get_string(kf, "Status", "filename", NULL);
+        current_config.width = g_key_file_get_integer(kf, "Status", "width", NULL);
+        current_config.height = g_key_file_get_integer(kf, "Status", "height", NULL);
+        current_config.count = g_key_file_get_integer(kf, "Status", "count", NULL);
+        current_config.interval = g_key_file_get_integer(kf, "Status", "interval", NULL);
+    }
+
+    g_free(status_file_path);
+    g_key_file_free(kf);
+}
+
+void main_write_config(void)
+{
+    gchar *status_file_path = g_build_filename(
+            g_get_user_config_dir(),
+            "timelapse-status.conf",
+            NULL);
+    GKeyFile *kf = g_key_file_new();
+
+    g_key_file_set_string(kf, "Status", "filename", current_config.filename);
+    g_key_file_set_integer(kf, "Status", "width", current_config.width);
+    g_key_file_set_integer(kf, "Status", "height", current_config.height);
+    g_key_file_set_integer(kf, "Status", "count", current_config.count);
+    g_key_file_set_integer(kf, "Status", "interval", current_config.interval);
+
+    g_key_file_save_to_file(kf, status_file_path, NULL);
+
+    g_free(status_file_path);
+    g_key_file_free(kf);
+}
+
 void main_child_stop(void);
 
 void main_cleanup(void)
@@ -364,6 +411,7 @@ void main_create_window(void)
     GdkPixbuf *pixbuf;
     GtkWidget *label_grid = gtk_grid_new();
     gchar tbuf[256];
+    gchar nbuf[256];
     struct tm *tm;
 
     gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
@@ -421,26 +469,40 @@ void main_create_window(void)
     gtk_grid_attach(GTK_GRID(grid), label_grid, 0, 1, 3, 1);
 
     /* Settings */
+
+    gchar *cfg_dir = g_path_get_dirname(current_config.filename);
+    gchar *cfg_file = g_path_get_basename(current_config.filename);
+
     label = gtk_label_new("Directory:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
     widgets.entries[ENTRY_DIRECTORY] = gtk_file_chooser_button_new("Choose directory",
             GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(widgets.entries[ENTRY_DIRECTORY]),
+            cfg_dir);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_DIRECTORY], 1, 2, 1, 1);
 
     label = gtk_label_new("Name:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     widgets.entries[ENTRY_BASENAME] = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_BASENAME]), cfg_file);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_BASENAME], 1, 3, 1, 1);
+
+    g_free(cfg_dir);
+    g_free(cfg_file);
 
     label = gtk_label_new("Size:");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
     widgets.entries[ENTRY_WIDTH] = gtk_entry_new();
+    snprintf(nbuf, 255, "%u", current_config.width);
+    gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_WIDTH]), nbuf);
     label = gtk_label_new(" x ");
     widgets.entries[ENTRY_HEIGHT] = gtk_entry_new();
+    snprintf(nbuf, 255, "%u", current_config.height);
+    gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_HEIGHT]), nbuf);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_WIDTH], TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 3);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_HEIGHT], TRUE, TRUE, 0);
@@ -450,12 +512,16 @@ void main_create_window(void)
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
     widgets.entries[ENTRY_N_SNAPSHOTS] = gtk_entry_new();
+    snprintf(nbuf, 255, "%u", current_config.count);
+    gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_N_SNAPSHOTS]), nbuf);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_N_SNAPSHOTS], 1, 5, 1, 1);
 
     label = gtk_label_new("Intervall (seconds):");
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
     widgets.entries[ENTRY_INTERVAL] = gtk_entry_new();
+    snprintf(nbuf, 255, "%u", current_config.interval);
+    gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_INTERVAL]), nbuf);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_INTERVAL], 1, 6, 1, 1);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
@@ -493,10 +559,12 @@ int main(int argc, char **argv)
     last_time = start_time;
     running_time = 0;
 
+    main_read_config();
     main_create_window();
 
     gtk_main();
 
+    main_write_config();
     main_cleanup();
 
     if (file_monitor) {
