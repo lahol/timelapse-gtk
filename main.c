@@ -4,6 +4,10 @@
 #include <locale.h>
 #include <math.h>
 #include <string.h>
+#include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 enum ENTRIES {
     ENTRY_DIRECTORY,
@@ -15,6 +19,13 @@ enum ENTRIES {
     N_ENTRIES
 };
 
+enum STATUS_LABELS {
+    LABEL_RUNNING_TIME,
+    LABEL_TIMESTAMP_LAST,
+    LABEL_TIMESTAMP_NEXT,
+    N_STATUS_LABELS
+};
+
 struct {
     GtkWidget *main_window;
     GtkWidget *entries[N_ENTRIES];
@@ -23,11 +34,19 @@ struct {
     GtkWidget *live_view;
     GtkWidget *last_view;
     GtkWidget *running_area;
+    GtkWidget *labels[N_STATUS_LABELS];
 } widgets;
 
 GPid timelapse_pid;
 GFileMonitor *file_monitor;
 gboolean is_running;
+
+time_t start_time;
+guint64 running_time;
+time_t last_time;
+time_t next_time;
+
+guint timer_id;
 
 typedef struct {
     gchar *filename;
@@ -45,6 +64,22 @@ void main_child_stop(void);
 void main_cleanup(void)
 {
     main_child_stop();
+}
+
+const gchar *seconds_to_string(guint32 seconds)
+{
+    static gchar buffer[64];
+    sprintf(buffer, "%02d:%02d:%02d", seconds/3600, (seconds%3600)/60, (seconds%60));
+    return buffer;
+}
+
+static gboolean update_running_time(gpointer userdata)
+{
+    static time_t cur_time;
+    time(&cur_time);
+    gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_RUNNING_TIME]),
+            seconds_to_string((guint32)difftime(cur_time, start_time)));
+    return G_SOURCE_CONTINUE;
 }
 
 gboolean main_filename_matches_pattern(gchar *name1, gchar *name2)
@@ -94,6 +129,25 @@ static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
             GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(path, 320, 240, NULL);
             gtk_image_set_from_pixbuf(GTK_IMAGE(widgets.last_view), pixbuf);
             g_object_unref(G_OBJECT(pixbuf));
+            struct stat st;
+            struct tm *tm;
+            gchar tbuf[256];
+            gchar *text;
+            time_t tlast;
+            if (stat(path, &st) == 0) {
+                tlast = st.st_mtim.tv_sec;
+                tm = localtime(&tlast);
+                strftime(tbuf, 255, "%x %T", tm);
+                text = g_strdup_printf("%s (%s)", tbuf, path);
+                gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_LAST]), text);
+                g_free(text);
+
+                tlast += current_config.interval;
+                tm = localtime(&tlast);
+                strftime(tbuf, 255, "%x %T", tm);
+                gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_NEXT]), tbuf);
+            }
+
             g_free(path);
         }
     }
@@ -170,11 +224,10 @@ void main_child_stop(void)
 {
     if (timelapse_pid > 0)
         kill(timelapse_pid, SIGKILL);
-    if (file_monitor) {
-        /*TODO: do not cancel here */
-        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
-        g_object_unref(G_OBJECT(file_monitor));
-        file_monitor = NULL;
+
+    if (timer_id) {
+        g_source_remove(timer_id);
+        timer_id = 0;
     }
 
     current_config.valid = FALSE;
@@ -266,13 +319,19 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         dir = g_file_new_for_path(directory);
     g_free(scheme);
 
-    /*TODO: if another file monitor is running free that first */
+    if (file_monitor) {
+        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
+        g_object_unref(G_OBJECT(file_monitor));
+    }
     file_monitor = g_file_monitor_directory(dir,
             G_FILE_MONITOR_NONE,
             NULL, NULL);
     g_signal_connect(G_OBJECT(file_monitor), "changed",
             G_CALLBACK(main_directory_changed_cb), NULL);
     g_object_unref(G_OBJECT(dir));
+
+    timer_id = g_timeout_add_seconds(1, (GSourceFunc)update_running_time, NULL);
+    time(&start_time);
 
     gtk_widget_set_sensitive(widgets.start_button, FALSE);
     gtk_widget_set_sensitive(widgets.stop_button, TRUE);
@@ -303,10 +362,17 @@ void main_create_window(void)
     GtkWidget *label;
     GtkWidget *hbox;
     GdkPixbuf *pixbuf;
+    GtkWidget *label_grid = gtk_grid_new();
+    gchar tbuf[256];
+    struct tm *tm;
 
     gtk_grid_set_row_spacing(GTK_GRID(grid), 3);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 3);
     gtk_container_set_border_width(GTK_CONTAINER(grid), 3);
+
+    gtk_grid_set_row_spacing(GTK_GRID(label_grid), 3);
+    gtk_grid_set_column_spacing(GTK_GRID(label_grid), 3);
+    gtk_container_set_border_width(GTK_CONTAINER(label_grid), 3);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
 
@@ -326,19 +392,51 @@ void main_create_window(void)
 
     gtk_grid_attach(GTK_GRID(grid), hbox, 0, 0, 3, 1);
 
+    /* Clock */
+    label = gtk_label_new("Running time:");
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(label_grid), label, 0, 0, 1, 1);
+    widgets.labels[LABEL_RUNNING_TIME] = gtk_label_new(seconds_to_string(running_time));
+    gtk_widget_set_halign(widgets.labels[LABEL_RUNNING_TIME], GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(label_grid), widgets.labels[LABEL_RUNNING_TIME], 1, 0, 1, 1);
+
+    tm = localtime(&last_time);
+    strftime(tbuf, 255, "%x %T", tm);
+    label = gtk_label_new("Last image:");
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(label_grid), label, 0, 1, 1, 1);
+    widgets.labels[LABEL_TIMESTAMP_LAST] = gtk_label_new(tbuf);
+    gtk_widget_set_halign(widgets.labels[LABEL_TIMESTAMP_LAST], GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(label_grid), widgets.labels[LABEL_TIMESTAMP_LAST], 1, 1, 1, 1);
+
+    tm = localtime(&next_time);
+    strftime(tbuf, 255, "%x %T", tm);
+    label = gtk_label_new("Next image:");
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(label_grid), label, 0, 2, 1, 1);
+    widgets.labels[LABEL_TIMESTAMP_NEXT] = gtk_label_new(tbuf);
+    gtk_widget_set_halign(widgets.labels[LABEL_TIMESTAMP_NEXT], GTK_ALIGN_START);
+    gtk_grid_attach(GTK_GRID(label_grid), widgets.labels[LABEL_TIMESTAMP_NEXT], 1, 2, 1, 1);
+
+    gtk_grid_attach(GTK_GRID(grid), label_grid, 0, 1, 3, 1);
+
+    /* Settings */
     label = gtk_label_new("Directory:");
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 1, 1, 1);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
     widgets.entries[ENTRY_DIRECTORY] = gtk_file_chooser_button_new("Choose directory",
             GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
-    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_DIRECTORY], 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_DIRECTORY], 1, 2, 1, 1);
 
     label = gtk_label_new("Name:");
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     widgets.entries[ENTRY_BASENAME] = gtk_entry_new();
-    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_BASENAME], 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_BASENAME], 1, 3, 1, 1);
 
     label = gtk_label_new("Size:");
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
     widgets.entries[ENTRY_WIDTH] = gtk_entry_new();
     label = gtk_label_new(" x ");
@@ -346,17 +444,19 @@ void main_create_window(void)
     gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_WIDTH], TRUE, TRUE, 0);
     gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 3);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_HEIGHT], TRUE, TRUE, 0);
-    gtk_grid_attach(GTK_GRID(grid), hbox, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), hbox, 1, 4, 1, 1);
 
     label = gtk_label_new("Image count:");
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
     widgets.entries[ENTRY_N_SNAPSHOTS] = gtk_entry_new();
-    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_N_SNAPSHOTS], 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_N_SNAPSHOTS], 1, 5, 1, 1);
 
     label = gtk_label_new("Intervall (seconds):");
-    gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
+    gtk_widget_set_halign(label, GTK_ALIGN_END);
+    gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
     widgets.entries[ENTRY_INTERVAL] = gtk_entry_new();
-    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_INTERVAL], 1, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_INTERVAL], 1, 6, 1, 1);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
     widgets.start_button = gtk_button_new_with_label("Start");
@@ -370,13 +470,13 @@ void main_create_window(void)
     gtk_widget_set_sensitive(widgets.stop_button, FALSE);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.stop_button, FALSE, FALSE, 3);
 
-    gtk_grid_attach(GTK_GRID(grid), hbox, 0, 6, 3, 1);
+    gtk_grid_attach(GTK_GRID(grid), hbox, 0, 7, 3, 1);
 
     widgets.running_area = gtk_drawing_area_new();
     gtk_widget_set_size_request(widgets.running_area, 100, 100);
     g_signal_connect(G_OBJECT(widgets.running_area), "draw",
             G_CALLBACK(main_running_area_draw), NULL);
-    gtk_grid_attach(GTK_GRID(grid), widgets.running_area, 2, 1, 1, 5);
+    gtk_grid_attach(GTK_GRID(grid), widgets.running_area, 2, 2, 1, 5);
 
     gtk_container_add(GTK_CONTAINER(widgets.main_window), grid);
 
@@ -388,11 +488,21 @@ int main(int argc, char **argv)
     gtk_init(&argc, &argv);
     setlocale(LC_NUMERIC, "C");
 
+    start_time = time(NULL);
+    next_time = start_time;
+    last_time = start_time;
+    running_time = 0;
+
     main_create_window();
 
     gtk_main();
 
     main_cleanup();
+
+    if (file_monitor) {
+        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
+        g_object_unref(G_OBJECT(file_monitor));
+    }
 
     return 0;
 }
