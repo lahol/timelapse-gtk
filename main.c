@@ -431,6 +431,8 @@ void main_create_window(void)
     gtk_container_set_border_width(GTK_CONTAINER(label_grid), 3);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
+    gtk_widget_set_hexpand(hbox, TRUE);
+    gtk_widget_set_vexpand(hbox, TRUE);
 
     widgets.live_view = gtk_drawing_area_new();
     gtk_widget_set_size_request(widgets.live_view, 320, 240);
@@ -550,6 +552,7 @@ void main_create_window(void)
     gtk_widget_set_size_request(widgets.running_area, 100, 100);
     g_signal_connect(G_OBJECT(widgets.running_area), "draw",
             G_CALLBACK(main_running_area_draw), NULL);
+    gtk_widget_set_hexpand(widgets.running_area, TRUE);
     gtk_grid_attach(GTK_GRID(grid), widgets.running_area, 2, 2, 1, 5);
 
     gtk_container_add(GTK_CONTAINER(widgets.main_window), grid);
