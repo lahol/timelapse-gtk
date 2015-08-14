@@ -9,6 +9,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <gdk/gdkx.h>
+#include "camera.h"
+
 enum ENTRIES {
     ENTRY_DIRECTORY,
     ENTRY_BASENAME,
@@ -47,6 +50,8 @@ time_t last_time;
 time_t next_time;
 
 guint timer_id;
+
+Camera *camera_live_view = NULL;
 
 typedef struct {
     gchar *filename;
@@ -111,6 +116,13 @@ void main_child_stop(void);
 void main_cleanup(void)
 {
     main_child_stop();
+
+    if (file_monitor) {
+        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
+        g_object_unref(G_OBJECT(file_monitor));
+    }
+
+    camera_destroy(camera_live_view);
 }
 
 const gchar *seconds_to_string(guint32 seconds)
@@ -206,6 +218,13 @@ static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
             g_free(path);
         }
     }
+}
+
+static void main_live_view_realize(GtkWidget *widget, gpointer userdata)
+{
+    g_print("live view realize\n");
+    camera_set_window_id(camera_live_view, GDK_WINDOW_XID(gtk_widget_get_window(widgets.live_view)));
+    camera_start(camera_live_view);
 }
 
 static gboolean main_running_area_draw(GtkWidget *widget, cairo_t *cr, gpointer userdata)
@@ -438,6 +457,8 @@ void main_create_window(void)
     gtk_widget_set_size_request(widgets.live_view, 320, 240);
     g_signal_connect(G_OBJECT(widgets.live_view), "draw",
             G_CALLBACK(main_live_view_draw), NULL);
+    g_signal_connect(G_OBJECT(widgets.live_view), "realize",
+            G_CALLBACK(main_live_view_realize), NULL);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.live_view, TRUE, TRUE, 3);
 
     pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 320, 240);
@@ -571,17 +592,14 @@ int main(int argc, char **argv)
     running_time = 0;
 
     main_read_config();
+    
+    camera_live_view = camera_new();
     main_create_window();
 
     gtk_main();
 
     main_write_config();
     main_cleanup();
-
-    if (file_monitor) {
-        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
-        g_object_unref(G_OBJECT(file_monitor));
-    }
 
     return 0;
 }
