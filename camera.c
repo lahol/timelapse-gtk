@@ -97,9 +97,54 @@ static void camera_bus_error(GstBus *bus, GstMessage *message, Camera *camera)
     gst_element_set_state(camera->pipeline, GST_STATE_READY);
 }
 
+static void camera_decoder_pad_added(GstElement *src, GstPad *new_pad, Camera *camera)
+{
+    g_print("Pad added: %s from %s\n", GST_PAD_NAME(new_pad), GST_ELEMENT_NAME(src));
+    GstCaps *new_pad_caps = NULL;
+    GstStructure *new_pad_struct = NULL;
+    const gchar *new_pad_type = NULL;
+    GstPad *sink_pad = NULL;
+    GstPadLinkReturn ret;
+
+    new_pad_caps = gst_pad_get_caps(new_pad);
+    new_pad_struct = gst_caps_get_structure(new_pad_caps, 0);
+    new_pad_type = gst_structure_get_name(new_pad_struct);
+
+    g_print("new type: %s\n", new_pad_type);
+
+    GstElementClass *klass = GST_ELEMENT_GET_CLASS(camera->playsink);
+    GstPadTemplate *templ = NULL;
+
+    if (g_str_has_prefix(new_pad_type, "audio"))
+        templ = gst_element_class_get_pad_template(klass, "audio_sink");
+    else if (g_str_has_prefix(new_pad_type, "video"))
+        templ = gst_element_class_get_pad_template(klass, "video_sink");
+
+    if (templ) {
+        sink_pad = gst_element_request_pad(camera->playsink, templ, NULL, NULL);
+
+        if (gst_pad_is_linked(sink_pad)) {
+            g_print("Already linked\n");
+            goto done;
+        }
+
+        ret = gst_pad_link(new_pad, sink_pad);
+        if (GST_PAD_LINK_FAILED(ret))
+            g_print("Linking failed\n");
+        else
+            g_print("Linking successful\n");
+    }
+    
+done:
+    if (new_pad_caps)
+        gst_caps_unref(new_pad_caps);
+    if (sink_pad)
+        gst_object_unref(sink_pad);
+}
+
 void camera_setup_pipeline(Camera *camera)
 {
-#if 0
+#if 1
     camera->pipeline = gst_pipeline_new(NULL);
     g_print("setup pipeline: %p\n", camera->pipeline);
 
@@ -111,15 +156,19 @@ void camera_setup_pipeline(Camera *camera)
 
     camera->source = gst_element_factory_make("v4l2src", NULL);
 
+    GstElement *decoder = gst_element_factory_make("decodebin2", NULL);
+    g_signal_connect(G_OBJECT(decoder), "pad-added",
+            G_CALLBACK(camera_decoder_pad_added), camera);
+
     /* FIXME: add videoscale */
 
-    gst_bin_add_many(GST_BIN(camera->pipeline), camera->source, camera->playsink, NULL);
-    if (!gst_element_link(camera->source, camera->playsink)) {
+    gst_bin_add_many(GST_BIN(camera->pipeline), camera->source, decoder, camera->playsink, NULL);
+    if (!gst_element_link(camera->source, decoder)) {
         g_printerr("Elements could not be linked. (source -> playsink)\n");
     }
-#endif
+#else
     camera->pipeline = gst_parse_launch("v4l2src ! xvimagesink", NULL);
-
+#endif
     GstBus *bus = gst_element_get_bus(GST_ELEMENT(camera->pipeline));
     gst_bus_set_sync_handler(bus, (GstBusSyncHandler)camera_bus_sync_handler, camera);
     gst_bus_add_signal_watch(bus);
