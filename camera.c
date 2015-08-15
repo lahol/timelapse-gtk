@@ -3,6 +3,8 @@
 #include <gst/interfaces/xoverlay.h>
 #include <gst/base/gstbasesink.h>
 
+#include <Imlib2.h>
+
 struct _Camera {
     gint64 window_id;
     GstElement *vsink;
@@ -179,3 +181,64 @@ void camera_setup_pipeline(Camera *camera)
 
     camera->initialized = 1;
 }
+
+gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, guint width, guint height)
+{
+    g_return_val_if_fail(camera != NULL, FALSE);
+
+    GstCaps *caps = NULL;
+    GstBuffer *buffer = NULL;
+    gint w = 0, h = 0;
+    GstStructure *s;
+    Imlib_Image image = NULL;
+    gboolean result = FALSE;
+
+    caps = gst_caps_new_simple("video/x-raw-rgb",
+            "format", G_TYPE_STRING, "ARGB",
+            "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1,
+            NULL);
+    if (width)
+        gst_caps_set_simple(caps,
+                "width", G_TYPE_INT, width,
+                NULL);
+    if (height)
+        gst_caps_set_simple(caps,
+                "height", G_TYPE_INT, height,
+                NULL);
+
+    g_signal_emit_by_name(camera->playsink, "convert-frame", caps, &buffer);
+    gst_caps_unref(caps);
+    caps = NULL;
+
+    if (!buffer)
+        goto done;
+
+    caps = gst_buffer_get_caps(buffer);
+    if (caps == NULL)
+        goto done;
+
+    s = gst_caps_get_structure(caps, 0);
+    gst_structure_get_int(s, "width", &w);
+    gst_structure_get_int(s, "height", &h);
+
+    /* save buffer to file */
+    image = imlib_create_image_using_data(w, h, (DATA32 *)buffer->data);
+    imlib_context_set_image(image);
+/*    imlib_image_set_format("jpeg");*/
+    Imlib_Load_Error err = 0;
+    imlib_save_image_with_error_return(filename, &err);
+    if (err)
+        g_print("Error loading image: %d\n", err);
+    imlib_free_image();
+
+
+    result = TRUE;
+
+done:
+    if (caps)
+        gst_caps_unref(caps);
+    if (buffer)
+        gst_buffer_unref(buffer);
+    return result;
+}
+

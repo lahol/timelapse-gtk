@@ -2,9 +2,9 @@ CC ?= gcc
 PKG_CONFIG := pkg-config
 
 CFLAGS ?= -Wall -g
-INCLUDES := `$(PKG_CONFIG) --cflags glib-2.0 gtk+-3.0 gstreamer-0.10 gdk-3.0 gstreamer-interfaces-0.10`
+INCLUDES := `$(PKG_CONFIG) --cflags glib-2.0 gtk+-3.0 gstreamer-0.10 gdk-3.0 gstreamer-interfaces-0.10` `imlib2-config --cflags`
 LDFLAGS ?= 
-LIBS := `$(PKG_CONFIG) --libs glib-2.0 gtk+-3.0 gstreamer-0.10 gdk-3.0 gstreamer-interfaces-0.10`
+LIBS := `$(PKG_CONFIG) --libs glib-2.0 gtk+-3.0 gstreamer-0.10 gdk-3.0 gstreamer-interfaces-0.10` `imlib2-config --libs`
 
 TLVERSION := '$(shell [ -f TL_VERSION ] && cat TL_VERSION)'
 VERSION := '$(shell [ -f VERSION ] && cat VERSION)'

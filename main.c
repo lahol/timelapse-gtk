@@ -40,7 +40,6 @@ struct {
     GtkWidget *labels[N_STATUS_LABELS];
 } widgets;
 
-GPid timelapse_pid;
 GFileMonitor *file_monitor;
 gboolean is_running;
 
@@ -49,7 +48,17 @@ guint64 running_time;
 time_t last_time;
 time_t next_time;
 
-guint timer_id;
+guint clock_timer_id;
+
+typedef struct {
+    guint camera_timer_id;
+    Camera *camera;
+    gint64 next_event;
+    gint64 interval;
+    guint64 image_number;
+    guint64 count;
+    guint64 frames_done;
+} TimelapseStatus;
 
 Camera *camera_live_view = NULL;
 
@@ -63,6 +72,9 @@ typedef struct {
 } TimelapseConfig;
 
 TimelapseConfig current_config;
+TimelapseStatus current_status;
+
+void main_child_stop(void);
 
 void main_read_config(void)
 {
@@ -220,6 +232,55 @@ static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
     }
 }
 
+gchar *main_generate_filename(const gchar *base, guint64 offset)
+{
+    if (base == NULL || base[0] == '\0')
+        return NULL;
+    /* only use the basename and not the directory part */
+    gchar *dirsep = strrchr(base, '/');
+    if (dirsep)
+        ++dirsep;
+    else
+        dirsep = (gchar *)base;
+
+    /* get suffix */
+    /* we only want numbers in the real filename, not the extension */
+    gchar *suff = strrchr(base, '.');
+    if (!suff)
+        suff = (gchar *)base + strlen(base);
+
+    /* get last number */
+    for ( ; suff >= dirsep; --suff)
+        if (g_ascii_isdigit(*suff))
+            break;
+    if (suff < dirsep)
+        return g_strdup(base);
+
+    gchar *num = suff++;
+    for ( ; num >= dirsep; --num)
+        if (!g_ascii_isdigit(*num))
+            break;
+    ++num;
+    
+    gchar format[32];
+    sprintf(format, "%%0%u" G_GUINT64_FORMAT, suff-num);
+    unsigned long long int n = strtoull(num, NULL, 10);
+    GString *str = g_string_new_len(base, num-base);
+    g_string_append_printf(str, format, n + offset);
+    g_string_append(str, suff);
+
+    return g_string_free(str, FALSE);
+}
+
+void main_camera_make_snapshot(guint64 number)
+{
+    gchar *filename = main_generate_filename(current_config.filename, number);
+    if (filename)
+        camera_save_snapshot_to_file(camera_live_view, filename,
+                current_config.width, current_config.height);
+    g_free(filename);
+}
+
 static void main_live_view_realize(GtkWidget *widget, gpointer userdata)
 {
     g_print("live view realize\n");
@@ -255,57 +316,60 @@ static gboolean main_live_view_draw(GtkWidget *widget, cairo_t *cr, gpointer use
     return TRUE;
 }
 
-static void main_child_watch_cb(GPid pid, gint status, gpointer userdata)
+static gboolean main_camera_idle(TimelapseStatus *status)
 {
-    g_spawn_close_pid(timelapse_pid);
-    timelapse_pid = 0;
+    gint64 now = g_get_monotonic_time();
 
-    gtk_widget_set_sensitive(widgets.start_button, TRUE);
-    gtk_widget_set_sensitive(widgets.stop_button, FALSE);
+    if (now <= status->next_event)
+        return TRUE;
 
-    main_child_stop();
+    status->next_event += status->interval;
+
+    main_camera_make_snapshot(status->image_number++);
+
+    ++status->frames_done;
+
+    if (status->count && status->frames_done >= status->count) {
+        status->camera_timer_id = 0;
+        main_child_stop();
+        return FALSE;
+    }
+
+    return TRUE;
 }
 
 gboolean main_child_start(const TimelapseConfig *config)
 {
-    gboolean ret;
-    gchar *sizename = g_strdup_printf("%dx%d", config->width, config->height);
-    gchar *rate = g_strdup_printf("%.6f", 1.0f/config->interval);
-    gchar *count = g_strdup_printf("%d", config->count);
-    gchar *argv[] = { "streamer",
-        "-o", config->filename,
-        "-s", sizename,
-        "-j", "100",
-        "-t", count,
-        "-r", rate,
-        NULL };
-    ret = g_spawn_async(NULL, argv, NULL,
-            G_SPAWN_DO_NOT_REAP_CHILD | G_SPAWN_SEARCH_PATH, NULL, NULL,
-            &timelapse_pid, NULL);
-    if (!ret)
-        goto done;
-
-    g_child_watch_add(timelapse_pid, (GChildWatchFunc)main_child_watch_cb, NULL);
-
-done:
-    g_free(sizename);
-    g_free(rate);
-
-    return ret;
+    current_status.camera = camera_live_view;
+    current_status.interval = config->interval * 1e6;
+    current_status.image_number = 0;
+    current_status.next_event = g_get_monotonic_time();
+    current_status.frames_done = 0;
+    current_status.count = config->count;
+    current_status.camera_timer_id = g_idle_add((GSourceFunc)main_camera_idle, &current_status);
+    
+    return TRUE;
 }
 
 void main_child_stop(void)
 {
-    if (timelapse_pid > 0)
-        kill(timelapse_pid, SIGKILL);
+    if (clock_timer_id) {
+        g_source_remove(clock_timer_id);
+        clock_timer_id = 0;
+    }
 
-    if (timer_id) {
-        g_source_remove(timer_id);
-        timer_id = 0;
+    if (current_status.camera_timer_id) {
+        g_source_remove(current_status.camera_timer_id);
+        current_status.camera_timer_id = 0;
     }
 
     current_config.valid = FALSE;
     is_running = FALSE;
+
+    if (GTK_IS_WIDGET(widgets.start_button))
+        gtk_widget_set_sensitive(widgets.start_button, TRUE);
+    if (GTK_IS_WIDGET(widgets.stop_button))
+        gtk_widget_set_sensitive(widgets.stop_button, FALSE);
     if (GTK_IS_WIDGET(widgets.running_area))
         gtk_widget_queue_draw(widgets.running_area);
 }
@@ -370,18 +434,6 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         goto done;
     }
 
-    if (!main_child_start(&current_config)) {
-        dialog = gtk_message_dialog_new(
-                GTK_WINDOW(widgets.main_window),
-                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-                GTK_MESSAGE_ERROR,
-                GTK_BUTTONS_OK,
-                "Could not spawn process. Maybe the program `streamer' is missing.");
-        gtk_dialog_run(GTK_DIALOG(dialog));
-        gtk_widget_destroy(dialog);
-        goto done;
-    }
-
     GFile *dir = NULL;
     if (!directory) {
         directory = g_get_current_dir();
@@ -404,7 +456,19 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
             G_CALLBACK(main_directory_changed_cb), NULL);
     g_object_unref(G_OBJECT(dir));
 
-    timer_id = g_timeout_add_seconds(1, (GSourceFunc)update_running_time, NULL);
+    if (!main_child_start(&current_config)) {
+/*        dialog = gtk_message_dialog_new(
+                GTK_WINDOW(widgets.main_window),
+                GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+                GTK_MESSAGE_ERROR,
+                GTK_BUTTONS_OK,
+                "Could not spawn process. Maybe the program `streamer' is missing.");
+        gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);*/
+        goto done;
+    }
+
+    clock_timer_id = g_timeout_add_seconds(1, (GSourceFunc)update_running_time, NULL);
     time(&start_time);
 
     gtk_widget_set_sensitive(widgets.start_button, FALSE);
