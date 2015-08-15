@@ -182,7 +182,8 @@ void camera_setup_pipeline(Camera *camera)
     camera->initialized = 1;
 }
 
-gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, guint width, guint height)
+gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, guint width, guint height,
+        CAMERA_SNAPSHOT_TAKEN_CALLBACK cb, gpointer userdata)
 {
     g_return_val_if_fail(camera != NULL, FALSE);
 
@@ -231,6 +232,8 @@ gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, gui
         g_print("Error loading image: %d\n", err);
     imlib_free_image();
 
+    if (cb)
+        cb(w, h, buffer->data, userdata);
 
     result = TRUE;
 

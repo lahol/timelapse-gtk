@@ -10,4 +10,7 @@ void camera_start(Camera *camera);
 void camera_stop(Camera *camera);
 void camera_destroy(Camera *camera);
 
-gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, guint width, guint height);
+/* width, height, data, userdata*/
+typedef void (*CAMERA_SNAPSHOT_TAKEN_CALLBACK)(guint, guint, guchar *, gpointer);
+gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, guint width, guint height,
+        CAMERA_SNAPSHOT_TAKEN_CALLBACK cb, gpointer userdata);

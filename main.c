@@ -38,6 +38,8 @@ struct {
     GtkWidget *last_view;
     GtkWidget *running_area;
     GtkWidget *labels[N_STATUS_LABELS];
+
+    cairo_surface_t *last_image_surface;
 } widgets;
 
 GFileMonitor *file_monitor;
@@ -134,6 +136,9 @@ void main_cleanup(void)
         g_object_unref(G_OBJECT(file_monitor));
     }
 
+    if (widgets.last_image_surface)
+        cairo_surface_destroy(widgets.last_image_surface);
+
     camera_destroy(camera_live_view);
 }
 
@@ -206,9 +211,9 @@ static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
         
         if (match) {
             gchar *path = g_file_get_path(file);
-            GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(path, 320, 240, NULL);
+/*            GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(path, 320, 240, NULL);
             gtk_image_set_from_pixbuf(GTK_IMAGE(widgets.last_view), pixbuf);
-            g_object_unref(G_OBJECT(pixbuf));
+            g_object_unref(G_OBJECT(pixbuf));*/
             struct stat st;
             struct tm *tm;
             gchar tbuf[256];
@@ -272,12 +277,32 @@ gchar *main_generate_filename(const gchar *base, guint64 offset)
     return g_string_free(str, FALSE);
 }
 
+void main_last_image_changed(guint width, guint height, guchar *data, gpointer userdata)
+{
+    if (widgets.last_image_surface && 
+            (cairo_image_surface_get_width(widgets.last_image_surface) != width ||
+             cairo_image_surface_get_height(widgets.last_image_surface) != height)) {
+        cairo_surface_destroy(widgets.last_image_surface);
+        widgets.last_image_surface = NULL;
+    }
+
+    if (!widgets.last_image_surface)
+        widgets.last_image_surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32,
+                                                                width, height);
+    guchar *surf_data = cairo_image_surface_get_data(widgets.last_image_surface);
+    memcpy(surf_data, data, width * height * 4);
+    cairo_surface_mark_dirty(widgets.last_image_surface);
+
+    gtk_widget_queue_draw(widgets.last_view);
+}
+
 void main_camera_make_snapshot(guint64 number)
 {
     gchar *filename = main_generate_filename(current_config.filename, number);
     if (filename)
         camera_save_snapshot_to_file(camera_live_view, filename,
-                current_config.width, current_config.height);
+                current_config.width, current_config.height,
+                (CAMERA_SNAPSHOT_TAKEN_CALLBACK)main_last_image_changed, NULL);
     g_free(filename);
 }
 
@@ -312,6 +337,40 @@ static gboolean main_live_view_draw(GtkWidget *widget, cairo_t *cr, gpointer use
     cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
     cairo_rectangle(cr, 0.0, 0.0, alloc.width, alloc.height);
     cairo_fill(cr);
+
+    return TRUE;
+}
+
+static gboolean main_last_view_draw(GtkWidget *widget, cairo_t *cr, gpointer userdata)
+{
+    GtkAllocation alloc;
+    gtk_widget_get_allocation(widget, &alloc);
+
+    cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+    cairo_rectangle(cr, 0.0, 0.0, alloc.width, alloc.height);
+    cairo_fill(cr);
+
+    int w, h;
+    double scale, tmp, ox, oy;
+    if (widgets.last_image_surface) {
+        w = cairo_image_surface_get_width(widgets.last_image_surface);
+        h = cairo_image_surface_get_height(widgets.last_image_surface);
+
+        scale = ((double)alloc.width)/((double)w);
+        tmp = ((double)alloc.height)/((double)h);
+        if (tmp < scale)
+            scale = tmp;
+
+        ox = (alloc.width - scale * w) * 0.5f;
+        oy = (alloc.height - scale * h) * 0.5f;
+
+        cairo_translate(cr, ox, oy);
+        cairo_scale(cr, scale, scale);
+
+        cairo_set_source_surface(cr, widgets.last_image_surface, 0.0f, 0.0f);
+        cairo_rectangle(cr, 0.0f, 0.0f, w, h);
+        cairo_fill(cr);
+    }
 
     return TRUE;
 }
@@ -499,7 +558,6 @@ void main_create_window(void)
     GtkWidget *grid = gtk_grid_new();
     GtkWidget *label;
     GtkWidget *hbox;
-    GdkPixbuf *pixbuf;
     GtkWidget *label_grid = gtk_grid_new();
     gchar tbuf[256];
     gchar nbuf[256];
@@ -525,12 +583,10 @@ void main_create_window(void)
             G_CALLBACK(main_live_view_realize), NULL);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.live_view, TRUE, TRUE, 3);
 
-    pixbuf = gdk_pixbuf_new(GDK_COLORSPACE_RGB, FALSE, 8, 320, 240);
-    gdk_pixbuf_fill(pixbuf, 0x000000ff);
-
-    widgets.last_view = gtk_image_new_from_pixbuf(pixbuf);
-    g_object_unref(G_OBJECT(pixbuf));
-
+    widgets.last_view = gtk_drawing_area_new();
+    gtk_widget_set_size_request(widgets.last_view, 320, 240);
+    g_signal_connect(G_OBJECT(widgets.last_view), "draw",
+            G_CALLBACK(main_last_view_draw), NULL);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.last_view, TRUE, TRUE, 3);
 
     gtk_grid_attach(GTK_GRID(grid), hbox, 0, 0, 3, 1);
