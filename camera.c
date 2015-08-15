@@ -213,6 +213,14 @@ gboolean camera_save_snapshot_to_file(Camera *camera, const gchar *filename, gui
     gst_structure_get_int(s, "width", &w);
     gst_structure_get_int(s, "height", &h);
 
+    /* we get the color in rgba*/
+#define SWAP_BYTES24(c) (c)=(((c) & 0xff00ff00) | (((c) >> 16)&0xff) | (((c) <<16)&0xff0000))
+    gsize j;
+    guint32 *cur;
+    for (j=0, cur = (guint32 *)buffer->data; j < w*h; ++j, ++cur)
+        SWAP_BYTES24(*cur);
+#undef SWAP_BYTES24
+
     /* save buffer to file */
     image = imlib_create_image_using_data(w, h, (DATA32 *)buffer->data);
     imlib_context_set_image(image);

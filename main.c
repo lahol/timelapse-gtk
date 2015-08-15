@@ -252,13 +252,34 @@ void main_last_image_changed(guint width, guint height, guchar *data, gpointer u
     gtk_widget_queue_draw(widgets.last_view);
 }
 
+void main_update_timestamps(const gchar *last_filename)
+{
+    struct stat st;
+    struct tm *tm;
+    gchar tbuf[256];
+    gchar *text;
+    if (stat(last_filename, &st) == 0) {
+        last_time = st.st_mtim.tv_sec;
+        tm = localtime(&last_time);
+        strftime(tbuf, 255, "%x %T", tm);
+        text = g_strdup_printf("%s (%s)", tbuf, last_filename);
+        gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_LAST]), text);
+        g_free(text);
+
+        next_time = last_time + current_config.interval;
+        tm = localtime(&next_time);
+        strftime(tbuf, 255, "%x %T", tm);
+        gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_NEXT]), tbuf);
+    }
+}
+
 void main_camera_make_snapshot(guint64 number)
 {
     gchar *filename = main_generate_filename(current_config.filename, number);
-    if (filename)
-        camera_save_snapshot_to_file(camera_live_view, filename,
+    if (filename && camera_save_snapshot_to_file(camera_live_view, filename,
                 current_config.width, current_config.height,
-                (CAMERA_SNAPSHOT_TAKEN_CALLBACK)main_last_image_changed, NULL);
+                (CAMERA_SNAPSHOT_TAKEN_CALLBACK)main_last_image_changed, NULL))
+        main_update_timestamps(filename);
     g_free(filename);
 }
 
@@ -551,6 +572,7 @@ void main_create_window(void)
     gtk_grid_attach(GTK_GRID(label_grid), label, 0, 1, 1, 1);
     widgets.labels[LABEL_TIMESTAMP_LAST] = gtk_label_new(tbuf);
     gtk_widget_set_halign(widgets.labels[LABEL_TIMESTAMP_LAST], GTK_ALIGN_START);
+    gtk_label_set_ellipsize(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_LAST]), PANGO_ELLIPSIZE_MIDDLE);
     gtk_grid_attach(GTK_GRID(label_grid), widgets.labels[LABEL_TIMESTAMP_LAST], 1, 1, 1, 1);
 
     tm = localtime(&next_time);
