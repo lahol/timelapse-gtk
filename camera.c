@@ -38,7 +38,6 @@ void camera_start(Camera *camera)
     if (!camera->initialized)
         camera_setup_pipeline(camera);
 
-    g_print("pipeline: %p\n", camera->pipeline);
     GstStateChangeReturn ret = gst_element_set_state(GST_ELEMENT(camera->pipeline), GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
         g_printerr("State change failure at camera_start()\n");
@@ -73,7 +72,6 @@ static GstBusSyncReply camera_bus_sync_handler(GstBus *bus, GstMessage *message,
         return GST_BUS_PASS;
 
     if (camera->window_id != 0) {
-        g_print("set window id: %lld\n", camera->window_id);
         gst_x_overlay_set_window_handle(GST_X_OVERLAY(GST_MESSAGE_SRC(message)), camera->window_id);
     }
     else {
@@ -101,7 +99,6 @@ static void camera_bus_error(GstBus *bus, GstMessage *message, Camera *camera)
 
 static void camera_decoder_pad_added(GstElement *src, GstPad *new_pad, Camera *camera)
 {
-    g_print("Pad added: %s from %s\n", GST_PAD_NAME(new_pad), GST_ELEMENT_NAME(src));
     GstCaps *new_pad_caps = NULL;
     GstStructure *new_pad_struct = NULL;
     const gchar *new_pad_type = NULL;
@@ -111,8 +108,6 @@ static void camera_decoder_pad_added(GstElement *src, GstPad *new_pad, Camera *c
     new_pad_caps = gst_pad_get_caps(new_pad);
     new_pad_struct = gst_caps_get_structure(new_pad_caps, 0);
     new_pad_type = gst_structure_get_name(new_pad_struct);
-
-    g_print("new type: %s\n", new_pad_type);
 
     GstElementClass *klass = GST_ELEMENT_GET_CLASS(camera->playsink);
     GstPadTemplate *templ = NULL;
@@ -133,8 +128,6 @@ static void camera_decoder_pad_added(GstElement *src, GstPad *new_pad, Camera *c
         ret = gst_pad_link(new_pad, sink_pad);
         if (GST_PAD_LINK_FAILED(ret))
             g_print("Linking failed\n");
-        else
-            g_print("Linking successful\n");
     }
     
 done:
@@ -148,8 +141,6 @@ void camera_setup_pipeline(Camera *camera)
 {
 #if 1
     camera->pipeline = gst_pipeline_new(NULL);
-    g_print("setup pipeline: %p\n", camera->pipeline);
-
     camera->vsink = gst_element_factory_make("xvimagesink", NULL);
     g_object_set(G_OBJECT(camera->vsink), "force-aspect-ratio", TRUE, NULL);
 
@@ -174,9 +165,9 @@ void camera_setup_pipeline(Camera *camera)
     GstBus *bus = gst_element_get_bus(GST_ELEMENT(camera->pipeline));
     gst_bus_set_sync_handler(bus, (GstBusSyncHandler)camera_bus_sync_handler, camera);
     gst_bus_add_signal_watch(bus);
+    /* FIXME: error handling error, eos, state-changed */
     g_signal_connect(G_OBJECT(bus), "message::error",
             G_CALLBACK(camera_bus_error), camera);
-    /* FIXME: error handling error, eos, state-changed */
     g_object_unref(bus);
 
     camera->initialized = 1;

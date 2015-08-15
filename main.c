@@ -42,7 +42,6 @@ struct {
     cairo_surface_t *last_image_surface;
 } widgets;
 
-GFileMonitor *file_monitor;
 gboolean is_running;
 
 time_t start_time;
@@ -131,11 +130,6 @@ void main_cleanup(void)
 {
     main_child_stop();
 
-    if (file_monitor) {
-        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
-        g_object_unref(G_OBJECT(file_monitor));
-    }
-
     if (widgets.last_image_surface)
         cairo_surface_destroy(widgets.last_image_surface);
 
@@ -197,44 +191,6 @@ gboolean main_filename_matches_pattern(gchar *name1, gchar *name2)
         }
     }
     return TRUE;
-}
-
-static void main_directory_changed_cb(GFileMonitor *monitor, GFile *file,
-        GFile *other_file, GFileMonitorEvent event_type, gpointer userdata)
-{
-    if (event_type == G_FILE_MONITOR_EVENT_CHANGES_DONE_HINT) {
-        gchar *bn1 = g_path_get_basename(current_config.filename);
-        gchar *bn2 = g_file_get_basename(file);
-        gboolean match = main_filename_matches_pattern(bn1, bn2);
-        g_free(bn1);
-        g_free(bn2);
-        
-        if (match) {
-            gchar *path = g_file_get_path(file);
-/*            GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file_at_size(path, 320, 240, NULL);
-            gtk_image_set_from_pixbuf(GTK_IMAGE(widgets.last_view), pixbuf);
-            g_object_unref(G_OBJECT(pixbuf));*/
-            struct stat st;
-            struct tm *tm;
-            gchar tbuf[256];
-            gchar *text;
-            if (stat(path, &st) == 0) {
-                last_time = st.st_mtim.tv_sec;
-                tm = localtime(&last_time);
-                strftime(tbuf, 255, "%x %T", tm);
-                text = g_strdup_printf("%s (%s)", tbuf, path);
-                gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_LAST]), text);
-                g_free(text);
-
-                next_time = last_time + current_config.interval;
-                tm = localtime(&next_time);
-                strftime(tbuf, 255, "%x %T", tm);
-                gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_TIMESTAMP_NEXT]), tbuf);
-            }
-
-            g_free(path);
-        }
-    }
 }
 
 gchar *main_generate_filename(const gchar *base, guint64 offset)
@@ -308,7 +264,6 @@ void main_camera_make_snapshot(guint64 number)
 
 static void main_live_view_realize(GtkWidget *widget, gpointer userdata)
 {
-    g_print("live view realize\n");
     camera_set_window_id(camera_live_view, GDK_WINDOW_XID(gtk_widget_get_window(widgets.live_view)));
     camera_start(camera_live_view);
 }
@@ -493,28 +448,6 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
         goto done;
     }
 
-    GFile *dir = NULL;
-    if (!directory) {
-        directory = g_get_current_dir();
-    }
-    gchar *scheme = g_uri_parse_scheme(directory);
-    if (scheme)
-        dir = g_file_new_for_uri(directory);
-    else
-        dir = g_file_new_for_path(directory);
-    g_free(scheme);
-
-    if (file_monitor) {
-        g_file_monitor_cancel(G_FILE_MONITOR(file_monitor));
-        g_object_unref(G_OBJECT(file_monitor));
-    }
-    file_monitor = g_file_monitor_directory(dir,
-            G_FILE_MONITOR_NONE,
-            NULL, NULL);
-    g_signal_connect(G_OBJECT(file_monitor), "changed",
-            G_CALLBACK(main_directory_changed_cb), NULL);
-    g_object_unref(G_OBJECT(dir));
-
     if (!main_child_start(&current_config)) {
 /*        dialog = gtk_message_dialog_new(
                 GTK_WINDOW(widgets.main_window),
@@ -549,6 +482,17 @@ static void main_stop_button_clicked(GtkButton *button, gpointer userdata)
     main_child_stop();
 }
 
+static void main_show_dialog_about(void)
+{
+    gchar *authors[] = { "Holger Langenau", NULL };
+
+    gtk_show_about_dialog(GTK_WINDOW(widgets.main_window),
+            "program-name", "Timelapse GTK",
+            "version", TLVERSION,
+            "authors", authors,
+            NULL);
+}
+
 void main_create_window(void)
 {
     widgets.main_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
@@ -559,6 +503,7 @@ void main_create_window(void)
     GtkWidget *label;
     GtkWidget *hbox;
     GtkWidget *label_grid = gtk_grid_new();
+    GtkWidget *button;
     gchar tbuf[256];
     gchar nbuf[256];
     struct tm *tm;
@@ -686,6 +631,13 @@ void main_create_window(void)
             G_CALLBACK(main_stop_button_clicked), NULL);
     gtk_widget_set_sensitive(widgets.stop_button, FALSE);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.stop_button, FALSE, FALSE, 3);
+    
+    button = gtk_button_new();
+    gtk_button_set_image(GTK_BUTTON(button),
+            gtk_image_new_from_icon_name("help-about", GTK_ICON_SIZE_BUTTON));
+    g_signal_connect_swapped(G_OBJECT(button), "clicked",
+            G_CALLBACK(main_show_dialog_about), NULL);
+    gtk_box_pack_end(GTK_BOX(hbox), button, FALSE, FALSE, 3);
 
     gtk_grid_attach(GTK_GRID(grid), hbox, 0, 7, 3, 1);
 
