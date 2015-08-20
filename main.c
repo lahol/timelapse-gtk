@@ -8,6 +8,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <glib/gi18n.h>
+
+#include <locale.h>
+#include <libintl.h>
 
 #include <gdk/gdkx.h>
 #include "camera.h"
@@ -150,7 +154,7 @@ static gboolean update_running_time(gpointer userdata)
 
     gchar *rt = g_strdup(seconds_to_string((guint32)difftime(cur_time, start_time)));
     gchar *nt = g_strdup(seconds_to_string(next_time >= cur_time ? (guint32)difftime(next_time, cur_time) : 0 ));
-    gchar *text = g_strdup_printf("%s (until next image: %s)", rt, nt);
+    gchar *text = g_strdup_printf(_("%s (until next image: %s)"), rt, nt);
 
     gtk_label_set_text(GTK_LABEL(widgets.labels[LABEL_RUNNING_TIME]), text);
 
@@ -441,19 +445,19 @@ static void main_start_button_clicked(GtkButton *button, gpointer userdata)
 
     current_config.width = (guint)strtoul(width, &endptr, 10);
     if (*endptr || endptr == width)
-        g_string_append(error_msg, "Width must be a number.\n");
+        g_string_append(error_msg, _("Width must be a number.\n"));
 
     current_config.height = (guint)strtoul(height, &endptr, 10);
     if (*endptr || endptr == height)
-        g_string_append(error_msg, "Height must be a number.\n");
+        g_string_append(error_msg, _("Height must be a number.\n"));
 
     current_config.count = (guint)strtoul(count, &endptr, 10);
     if (*endptr || endptr == count)
-        g_string_append(error_msg, "Count must be a number.\n");
+        g_string_append(error_msg, _("Count must be a number.\n"));
 
     current_config.interval = (guint)strtoul(interval, &endptr, 10);
     if (*endptr || endptr == interval)
-        g_string_append(error_msg, "Interval must be a number.\n");
+        g_string_append(error_msg, _("Interval must be a number.\n"));
 
     gchar *msg = g_string_free(error_msg, FALSE);
     GtkWidget *dialog;
@@ -558,7 +562,7 @@ void main_create_window(void)
     gtk_grid_attach(GTK_GRID(grid), hbox, 0, 0, 3, 1);
 
     /* Clock */
-    label = gtk_label_new("Running time:");
+    label = gtk_label_new(_("Running time:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(label_grid), label, 0, 0, 1, 1);
     widgets.labels[LABEL_RUNNING_TIME] = gtk_label_new(seconds_to_string(running_time));
@@ -567,7 +571,7 @@ void main_create_window(void)
 
     tm = localtime(&last_time);
     strftime(tbuf, 255, "%x %T", tm);
-    label = gtk_label_new("Last image:");
+    label = gtk_label_new(_("Last image:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(label_grid), label, 0, 1, 1, 1);
     widgets.labels[LABEL_TIMESTAMP_LAST] = gtk_label_new(tbuf);
@@ -577,7 +581,7 @@ void main_create_window(void)
 
     tm = localtime(&next_time);
     strftime(tbuf, 255, "%x %T", tm);
-    label = gtk_label_new("Next image:");
+    label = gtk_label_new(_("Next image:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(label_grid), label, 0, 2, 1, 1);
     widgets.labels[LABEL_TIMESTAMP_NEXT] = gtk_label_new(tbuf);
@@ -591,16 +595,16 @@ void main_create_window(void)
     gchar *cfg_dir = g_path_get_dirname(current_config.filename);
     gchar *cfg_file = g_path_get_basename(current_config.filename);
 
-    label = gtk_label_new("Directory:");
+    label = gtk_label_new(_("Directory:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 2, 1, 1);
-    widgets.entries[ENTRY_DIRECTORY] = gtk_file_chooser_button_new("Choose directory",
+    widgets.entries[ENTRY_DIRECTORY] = gtk_file_chooser_button_new(_("Choose directory"),
             GTK_FILE_CHOOSER_ACTION_SELECT_FOLDER);
     gtk_file_chooser_set_current_folder(GTK_FILE_CHOOSER(widgets.entries[ENTRY_DIRECTORY]),
             cfg_dir);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_DIRECTORY], 1, 2, 1, 1);
 
-    label = gtk_label_new("Name:");
+    label = gtk_label_new(_("Name:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 3, 1, 1);
     widgets.entries[ENTRY_BASENAME] = gtk_entry_new();
@@ -610,7 +614,7 @@ void main_create_window(void)
     g_free(cfg_dir);
     g_free(cfg_file);
 
-    label = gtk_label_new("Size:");
+    label = gtk_label_new(_("Size:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 4, 1, 1);
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
@@ -626,7 +630,7 @@ void main_create_window(void)
     gtk_box_pack_start(GTK_BOX(hbox), widgets.entries[ENTRY_HEIGHT], TRUE, TRUE, 0);
     gtk_grid_attach(GTK_GRID(grid), hbox, 1, 4, 1, 1);
 
-    label = gtk_label_new("Image count:");
+    label = gtk_label_new(_("Image count:"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 5, 1, 1);
     widgets.entries[ENTRY_N_SNAPSHOTS] = gtk_entry_new();
@@ -634,7 +638,7 @@ void main_create_window(void)
     gtk_entry_set_text(GTK_ENTRY(widgets.entries[ENTRY_N_SNAPSHOTS]), nbuf);
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_N_SNAPSHOTS], 1, 5, 1, 1);
 
-    label = gtk_label_new("Intervall (seconds):");
+    label = gtk_label_new(_("Interval (seconds):"));
     gtk_widget_set_halign(label, GTK_ALIGN_END);
     gtk_grid_attach(GTK_GRID(grid), label, 0, 6, 1, 1);
     widgets.entries[ENTRY_INTERVAL] = gtk_entry_new();
@@ -643,12 +647,12 @@ void main_create_window(void)
     gtk_grid_attach(GTK_GRID(grid), widgets.entries[ENTRY_INTERVAL], 1, 6, 1, 1);
 
     hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 3);
-    widgets.start_button = gtk_button_new_with_label("Start");
+    widgets.start_button = gtk_button_new_with_label(_("Start"));
     g_signal_connect(G_OBJECT(widgets.start_button), "clicked",
             G_CALLBACK(main_start_button_clicked), NULL);
     gtk_box_pack_start(GTK_BOX(hbox), widgets.start_button, FALSE, FALSE, 3);
 
-    widgets.stop_button = gtk_button_new_with_label("Stop");
+    widgets.stop_button = gtk_button_new_with_label(_("Stop"));
     g_signal_connect(G_OBJECT(widgets.stop_button), "clicked",
             G_CALLBACK(main_stop_button_clicked), NULL);
     gtk_widget_set_sensitive(widgets.stop_button, FALSE);
@@ -678,7 +682,12 @@ void main_create_window(void)
 int main(int argc, char **argv)
 {
     gtk_init(&argc, &argv);
+    setlocale(LC_ALL, "");
     setlocale(LC_NUMERIC, "C");
+
+    bindtextdomain(APPNAME, LOCALEDIR);
+    bind_textdomain_codeset(APPNAME, "UTF-8");
+    textdomain(APPNAME);
 
     start_time = time(NULL);
     next_time = start_time;

@@ -15,6 +15,7 @@ endif
 
 APPNAME := timelapse-gtk
 PREFIX ?= /usr
+LOCALEDIR ?= $(PREFIX)/share/locale
 
 tl_SRC := $(wildcard *.c)
 tl_OBJ := $(tl_SRC:.c=.o)
@@ -22,6 +23,7 @@ tl_HEADERS := $(wildcard *.h)
 
 CFLAGS += -DTLVERSION=\"${TLVERSION}\"
 CFLAGS += -DAPPNAME=\"${APPNAME}\"
+CFLAGS += -DLOCALEDIR=\"${LOCALEDIR}\"
 
 all: $(APPNAME)
 
@@ -31,9 +33,17 @@ $(APPNAME): $(tl_OBJ)
 %.o: %.c $(tl_HEADERS)
 	$(CC) $(CFLAGS) $(INCLUDES) -c -o $@ $<
 
-install: $(APPNAME)
+locales-prepare: $(tl_SRC)
+	mkdir -p translations
+	xgettext --keyword=_ -d $(APPNAME) -s -o translations/$(APPNAME).pot $(tl_SRC)
+
+install: $(APPNAME) install-locales
 	install $(APPNAME) $(PREFIX)/bin
 	install $(APPNAME).desktop $(PREFIX)/share/applications
+
+# FIXME: make this more general (Makefile in subdir)
+install-locales:
+	install translations/de/LC_MESSAGES/$(APPNAME).mo $(LOCALEDIR)/de/LC_MESSAGES
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(APPNAME)
@@ -51,4 +61,4 @@ dist: $(tl_SRC) $(tl_HEADERS) Makefile
 clean:
 	rm -f $(APPNAME) $(tl_OBJ)
 
-.PHONY: all clean install
+.PHONY: all clean install locales-prepare install-locales
