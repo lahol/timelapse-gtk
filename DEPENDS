@@ -6,3 +6,6 @@ Build dependencies
  • libgstreamer0.10-dev
  • libgstreamer-plugins-base0.10-dev
  • libimlib2-dev
+
+Runtime dependencies
+ • gstreamer0.10-plugins-good
